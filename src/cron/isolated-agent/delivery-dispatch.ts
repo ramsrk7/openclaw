@@ -5,6 +5,7 @@ import type { ReplyPayload } from "../../auto-reply/types.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import { resolveAgentMainSessionKey } from "../../config/sessions.js";
+import { deliverA2aPushEnvelope } from "../../infra/a2a-push.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { resolveAgentOutboundIdentity } from "../../infra/outbound/identity.js";
 import { resolveOutboundSessionRoute } from "../../infra/outbound/outbound-session.js";
@@ -335,6 +336,23 @@ export async function dispatchCronDelivery(
         }
         logWarn(`[cron:${params.job.id}] ${message}`);
       }
+      void deliverA2aPushEnvelope({
+        sessionKey: announceSessionKey,
+        envelope: {
+          kind: "status-update",
+          idempotencyKey: `cron:${params.job.id}:${params.runSessionId}:${params.runEndedAt}`,
+          taskId: `${params.job.id}:${params.runSessionId}`,
+          runId: `${params.job.id}:${params.runSessionId}:${params.runStartedAt}`,
+          status: { state: didAnnounce ? "completed" : "failed" },
+          message: synthesizedText
+            ? {
+                type: "final",
+                text: synthesizedText,
+              }
+            : undefined,
+          ts: Date.now(),
+        },
+      });
     } catch (err) {
       if (!params.deliveryBestEffort) {
         return params.withRunSession({
@@ -395,7 +413,8 @@ export async function dispatchCronDelivery(
     // be swallowed by ANNOUNCE_SKIP/NO_REPLY in the target agent turn, which
     // silently drops cron output for topic-bound sessions.
     const useDirectDelivery =
-      params.deliveryPayloadHasStructuredContent || params.resolvedDelivery.threadId != null;
+      params.resolvedDelivery.channel !== "custom" &&
+      (params.deliveryPayloadHasStructuredContent || params.resolvedDelivery.threadId != null);
     if (useDirectDelivery) {
       const directResult = await deliverViaDirect(params.resolvedDelivery);
       if (directResult) {

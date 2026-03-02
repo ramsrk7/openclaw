@@ -1,6 +1,28 @@
 import AjvPkg, { type ErrorObject } from "ajv";
 import type { SessionsPatchResult } from "../session-utils.types.js";
 import {
+  type A2aCancelParams,
+  A2aCancelParamsSchema,
+  type A2aCancelResult,
+  A2aCancelResultSchema,
+  type A2aEvent,
+  A2aEventSchema,
+  type A2aPushRegisterParams,
+  A2aPushRegisterParamsSchema,
+  type A2aPushRegisterResult,
+  A2aPushRegisterResultSchema,
+  type A2aPushUnregisterParams,
+  A2aPushUnregisterParamsSchema,
+  type A2aPushUnregisterResult,
+  A2aPushUnregisterResultSchema,
+  type A2aSendParams,
+  A2aSendParamsSchema,
+  type A2aSendResult,
+  A2aSendResultSchema,
+  type A2aWaitParams,
+  A2aWaitParamsSchema,
+  type A2aWaitResult,
+  A2aWaitResultSchema,
   type AgentEvent,
   AgentEventSchema,
   type AgentIdentityParams,
@@ -245,6 +267,15 @@ export const validateEventFrame = ajv.compile<EventFrame>(EventFrameSchema);
 export const validateSendParams = ajv.compile(SendParamsSchema);
 export const validatePollParams = ajv.compile<PollParams>(PollParamsSchema);
 export const validateAgentParams = ajv.compile(AgentParamsSchema);
+export const validateA2aSendParams = ajv.compile<A2aSendParams>(A2aSendParamsSchema);
+export const validateA2aWaitParams = ajv.compile<A2aWaitParams>(A2aWaitParamsSchema);
+export const validateA2aCancelParams = ajv.compile<A2aCancelParams>(A2aCancelParamsSchema);
+export const validateA2aPushRegisterParams = ajv.compile<A2aPushRegisterParams>(
+  A2aPushRegisterParamsSchema,
+);
+export const validateA2aPushUnregisterParams = ajv.compile<A2aPushUnregisterParams>(
+  A2aPushUnregisterParamsSchema,
+);
 export const validateAgentIdentityParams =
   ajv.compile<AgentIdentityParams>(AgentIdentityParamsSchema);
 export const validateAgentWaitParams = ajv.compile<AgentWaitParams>(AgentWaitParamsSchema);
@@ -429,10 +460,21 @@ export {
   ErrorShapeSchema,
   StateVersionSchema,
   AgentEventSchema,
+  A2aEventSchema,
   ChatEventSchema,
   SendParamsSchema,
   PollParamsSchema,
   AgentParamsSchema,
+  A2aSendParamsSchema,
+  A2aSendResultSchema,
+  A2aWaitParamsSchema,
+  A2aWaitResultSchema,
+  A2aCancelParamsSchema,
+  A2aCancelResultSchema,
+  A2aPushRegisterParamsSchema,
+  A2aPushRegisterResultSchema,
+  A2aPushUnregisterParamsSchema,
+  A2aPushUnregisterResultSchema,
   AgentIdentityParamsSchema,
   AgentIdentityResultSchema,
   WakeParamsSchema,
@@ -528,6 +570,17 @@ export type {
   ErrorShape,
   StateVersion,
   AgentEvent,
+  A2aEvent,
+  A2aSendParams,
+  A2aSendResult,
+  A2aWaitParams,
+  A2aWaitResult,
+  A2aCancelParams,
+  A2aCancelResult,
+  A2aPushRegisterParams,
+  A2aPushRegisterResult,
+  A2aPushUnregisterParams,
+  A2aPushUnregisterResult,
   AgentIdentityParams,
   AgentIdentityResult,
   AgentWaitParams,

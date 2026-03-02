@@ -1,6 +1,6 @@
 import type { ErrorObject } from "ajv";
 import { describe, expect, it } from "vitest";
-import { formatValidationErrors } from "./index.js";
+import { formatValidationErrors, validateA2aSendParams } from "./index.js";
 
 const makeError = (overrides: Partial<ErrorObject>): ErrorObject => ({
   keyword: "type",
@@ -9,6 +9,38 @@ const makeError = (overrides: Partial<ErrorObject>): ErrorObject => ({
   params: {},
   message: "validation error",
   ...overrides,
+});
+
+describe("A2A validators", () => {
+  it("accepts valid a2a.send params with mixed parts", () => {
+    const valid = validateA2aSendParams({
+      kind: "message",
+      messageId: "msg-1",
+      contextId: "ctx-1",
+      parts: [
+        { type: "text", text: "hello" },
+        { type: "json", value: { foo: "bar" } },
+        {
+          type: "file",
+          fileName: "a.png",
+          contentType: "image/png",
+          base64: "Zm9v",
+        },
+      ],
+    });
+    expect(valid).toBe(true);
+  });
+
+  it("rejects a2a.send params with unknown top-level field", () => {
+    const valid = validateA2aSendParams({
+      kind: "message",
+      messageId: "msg-1",
+      contextId: "ctx-1",
+      parts: [{ type: "text", text: "hello" }],
+      unknownField: true,
+    });
+    expect(valid).toBe(false);
+  });
 });
 
 describe("formatValidationErrors", () => {

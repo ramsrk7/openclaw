@@ -1,5 +1,7 @@
+import { parseAgentSessionKey } from "../../../../src/sessions/session-key-utils.js";
 import { extractText } from "../chat/message-extract.ts";
 import type { GatewayBrowserClient } from "../gateway.ts";
+import type { ChatTransportMode } from "../storage.ts";
 import type { ChatAttachment } from "../ui-types.ts";
 import { generateUUID } from "../uuid.ts";
 
@@ -16,7 +18,9 @@ export type ChatState = {
   chatRunId: string | null;
   chatStream: string | null;
   chatStreamStartedAt: number | null;
+  chatTransportMode?: ChatTransportMode;
   lastError: string | null;
+  settings?: { chatTransportMode?: ChatTransportMode };
 };
 
 export type ChatEventPayload = {
@@ -26,6 +30,70 @@ export type ChatEventPayload = {
   message?: unknown;
   errorMessage?: string;
 };
+
+export type A2aEventPayload = {
+  type: "a2a.task.status" | "a2a.message.delta" | "a2a.message.final" | "a2a.artifact.update";
+  runId: string;
+  taskId?: string;
+  contextId?: string;
+  payload?: Record<string, unknown>;
+};
+
+function decodeA2aContextSessionKey(sessionKey: string): string | null {
+  const prefix = "agent:main:a2a:ctx:";
+  if (!sessionKey.startsWith(prefix)) {
+    return null;
+  }
+  const encoded = sessionKey.slice(prefix.length).trim();
+  if (!encoded) {
+    return null;
+  }
+  try {
+    const base64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    return atob(padded);
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSessionAlias(value: string): string {
+  const raw = value.trim();
+  if (!raw) {
+    return raw;
+  }
+  if (raw === "main") {
+    return "agent:main:main";
+  }
+  const parsed = parseAgentSessionKey(raw);
+  if (parsed?.agentId === "main" && parsed.rest === "main") {
+    return "agent:main:main";
+  }
+  return raw;
+}
+
+function sessionKeysMatch(left: string, right: string): boolean {
+  return normalizeSessionAlias(left) === normalizeSessionAlias(right);
+}
+
+function matchesChatEventSession(state: ChatState, payloadSessionKey: string): boolean {
+  if (sessionKeysMatch(payloadSessionKey, state.sessionKey)) {
+    return true;
+  }
+  const decodedContextId = decodeA2aContextSessionKey(payloadSessionKey);
+  return decodedContextId ? sessionKeysMatch(decodedContextId, state.sessionKey) : false;
+}
+
+function resolveChatTransportMode(state: ChatState): ChatTransportMode {
+  if (state.chatTransportMode === "a2a" || state.chatTransportMode === "chat") {
+    return state.chatTransportMode;
+  }
+  const modeFromSettings = state.settings?.chatTransportMode;
+  if (modeFromSettings === "a2a" || modeFromSettings === "chat") {
+    return modeFromSettings;
+  }
+  return "chat";
+}
 
 export async function loadChatHistory(state: ChatState) {
   if (!state.client || !state.connected) {
@@ -172,13 +240,37 @@ export async function sendChatMessage(
     : undefined;
 
   try {
-    await state.client.request("chat.send", {
-      sessionKey: state.sessionKey,
-      message: msg,
-      deliver: false,
-      idempotencyKey: runId,
-      attachments: apiAttachments,
-    });
+    if (resolveChatTransportMode(state) === "a2a") {
+      const parts: Array<Record<string, unknown>> = [];
+      if (msg) {
+        parts.push({
+          type: "text",
+          text: msg,
+        });
+      }
+      for (const att of apiAttachments ?? []) {
+        parts.push({
+          type: "file",
+          contentType: att.mimeType,
+          fileName: "image",
+          base64: att.content,
+        });
+      }
+      await state.client.request("a2a.send", {
+        kind: "message",
+        messageId: runId,
+        contextId: state.sessionKey,
+        parts,
+      });
+    } else {
+      await state.client.request("chat.send", {
+        sessionKey: state.sessionKey,
+        message: msg,
+        deliver: false,
+        idempotencyKey: runId,
+        attachments: apiAttachments,
+      });
+    }
     return runId;
   } catch (err) {
     const error = String(err);
@@ -206,10 +298,18 @@ export async function abortChatRun(state: ChatState): Promise<boolean> {
   }
   const runId = state.chatRunId;
   try {
-    await state.client.request(
-      "chat.abort",
-      runId ? { sessionKey: state.sessionKey, runId } : { sessionKey: state.sessionKey },
-    );
+    if (resolveChatTransportMode(state) === "a2a") {
+      await state.client.request("a2a.cancel", {
+        mode: runId ? "run" : "context",
+        runId: runId ?? undefined,
+        contextId: state.sessionKey,
+      });
+    } else {
+      await state.client.request(
+        "chat.abort",
+        runId ? { sessionKey: state.sessionKey, runId } : { sessionKey: state.sessionKey },
+      );
+    }
     return true;
   } catch (err) {
     state.lastError = String(err);
@@ -221,7 +321,7 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
   if (!payload) {
     return null;
   }
-  if (payload.sessionKey !== state.sessionKey) {
+  if (!matchesChatEventSession(state, payload.sessionKey)) {
     return null;
   }
 
@@ -282,4 +382,86 @@ export function handleChatEvent(state: ChatState, payload?: ChatEventPayload) {
     state.lastError = payload.errorMessage ?? "chat error";
   }
   return payload.state;
+}
+
+export function handleA2aEvent(state: ChatState, payload?: A2aEventPayload) {
+  if (!payload) {
+    return null;
+  }
+  const runId = payload.taskId ?? payload.runId;
+  if (!runId) {
+    return null;
+  }
+  const isActiveRun = Boolean(state.chatRunId && state.chatRunId === runId);
+  if (payload.contextId && !sessionKeysMatch(payload.contextId, state.sessionKey) && !isActiveRun) {
+    return null;
+  }
+
+  if (payload.type === "a2a.message.delta") {
+    const text = typeof payload.payload?.text === "string" ? payload.payload.text : "";
+    if (!text) {
+      return null;
+    }
+    if (state.chatRunId && state.chatRunId !== runId) {
+      return null;
+    }
+    if (!state.chatRunId) {
+      state.chatRunId = runId;
+      state.chatStream = "";
+      state.chatStreamStartedAt = Date.now();
+    }
+    state.chatStream = `${state.chatStream ?? ""}${text}`;
+    return "delta";
+  }
+
+  if (payload.type === "a2a.message.final") {
+    const text = typeof payload.payload?.text === "string" ? payload.payload.text : "";
+    if (state.chatRunId && state.chatRunId !== runId) {
+      if (text.trim()) {
+        state.chatMessages = [
+          ...state.chatMessages,
+          {
+            role: "assistant",
+            content: [{ type: "text", text }],
+            timestamp: Date.now(),
+          },
+        ];
+      }
+      return "final";
+    }
+    if (text.trim()) {
+      state.chatMessages = [
+        ...state.chatMessages,
+        {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          timestamp: Date.now(),
+        },
+      ];
+    }
+    state.chatStream = null;
+    state.chatRunId = null;
+    state.chatStreamStartedAt = null;
+    return "final";
+  }
+
+  if (payload.type === "a2a.task.status") {
+    const taskState = payload.payload?.state;
+    if (taskState === "failed") {
+      const errorMessage =
+        typeof payload.payload?.error === "string" ? payload.payload.error : "a2a error";
+      state.chatStream = null;
+      state.chatRunId = null;
+      state.chatStreamStartedAt = null;
+      state.lastError = errorMessage;
+      return "error";
+    }
+    if (taskState === "cancelled") {
+      state.chatStream = null;
+      state.chatRunId = null;
+      state.chatStreamStartedAt = null;
+      return "aborted";
+    }
+  }
+  return null;
 }

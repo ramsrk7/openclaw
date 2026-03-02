@@ -183,6 +183,16 @@ export function resolveOutboundTarget(params: {
       ),
     };
   }
+  if (params.channel === "custom") {
+    const target = params.to?.trim();
+    if (target) {
+      return { ok: true, to: target };
+    }
+    return {
+      ok: false,
+      error: new Error("Custom delivery requires `to` (session key)."),
+    };
+  }
 
   const plugin = resolveOutboundChannelPlugin({
     channel: params.channel,

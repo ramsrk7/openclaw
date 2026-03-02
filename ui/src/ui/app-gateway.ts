@@ -16,7 +16,12 @@ import { shouldReloadHistoryForFinalEvent } from "./chat-event-reload.ts";
 import { loadAgents, loadToolsCatalog } from "./controllers/agents.ts";
 import { loadAssistantIdentity } from "./controllers/assistant-identity.ts";
 import { loadChatHistory } from "./controllers/chat.ts";
-import { handleChatEvent, type ChatEventPayload } from "./controllers/chat.ts";
+import {
+  handleA2aEvent,
+  handleChatEvent,
+  type A2aEventPayload,
+  type ChatEventPayload,
+} from "./controllers/chat.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import type { ExecApprovalRequest } from "./controllers/exec-approval.ts";
 import {
@@ -257,6 +262,20 @@ function handleChatGatewayEvent(host: GatewayHost, payload: ChatEventPayload | u
   }
 }
 
+function handleA2aGatewayEvent(host: GatewayHost, payload: A2aEventPayload | undefined) {
+  const state = handleA2aEvent(host as unknown as OpenClawApp, payload);
+  if (state !== "final" && state !== "error" && state !== "aborted") {
+    return;
+  }
+  resetToolStream(host as unknown as Parameters<typeof resetToolStream>[0]);
+  void flushChatQueueForEvent(host as unknown as Parameters<typeof flushChatQueueForEvent>[0]);
+  if (state === "final") {
+    void loadSessions(host as unknown as OpenClawApp, {
+      activeMinutes: CHAT_SESSIONS_ACTIVE_MINUTES,
+    });
+  }
+}
+
 function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
   host.eventLogBuffer = [
     { ts: Date.now(), event: evt.event, payload: evt.payload },
@@ -279,6 +298,11 @@ function handleGatewayEventUnsafe(host: GatewayHost, evt: GatewayEventFrame) {
 
   if (evt.event === "chat") {
     handleChatGatewayEvent(host, evt.payload as ChatEventPayload | undefined);
+    return;
+  }
+
+  if (evt.event === "a2a") {
+    handleA2aGatewayEvent(host, evt.payload as A2aEventPayload | undefined);
     return;
   }
 

@@ -2,9 +2,11 @@ import { DEFAULT_HEARTBEAT_ACK_MAX_CHARS, stripHeartbeatToken } from "../auto-re
 import { normalizeVerboseLevel } from "../auto-reply/thinking.js";
 import { isSilentReplyText, SILENT_REPLY_TOKEN } from "../auto-reply/tokens.js";
 import { loadConfig } from "../config/config.js";
+import { deliverA2aPushEnvelope } from "../infra/a2a-push.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
 import { stripInlineDirectiveTagsForDisplay } from "../utils/directive-tags.js";
+import { contextIdFromA2aSessionKey } from "./a2a-context.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -265,6 +267,7 @@ export type AgentEventHandlerOptions = {
   resolveSessionKeyForRun: (runId: string) => string | undefined;
   clearAgentRunContext: (runId: string) => void;
   toolEventRecipients: ToolEventRecipientRegistry;
+  hasA2aEventClients?: () => boolean;
 };
 
 export function createAgentEventHandler({
@@ -276,6 +279,7 @@ export function createAgentEventHandler({
   resolveSessionKeyForRun,
   clearAgentRunContext,
   toolEventRecipients,
+  hasA2aEventClients,
 }: AgentEventHandlerOptions) {
   const emitChatDelta = (
     sessionKey: string,
@@ -446,6 +450,114 @@ export function createAgentEventHandler({
 
     const lifecyclePhase =
       evt.stream === "lifecycle" && typeof evt.data?.phase === "string" ? evt.data.phase : null;
+    const contextId = contextIdFromA2aSessionKey(sessionKey);
+    const bufferedText = stripInlineDirectiveTagsForDisplay(
+      chatRunState.buffers.get(clientRunId) ?? "",
+    ).text.trim();
+
+    if (contextId) {
+      const emitA2a = (payload: Record<string, unknown>) => {
+        broadcast("a2a", payload);
+      };
+      if (evt.stream === "assistant" && typeof evt.data?.text === "string") {
+        emitA2a({
+          type: "a2a.message.delta",
+          runId: clientRunId,
+          taskId: clientRunId,
+          contextId,
+          seq: evt.seq,
+          ts: evt.ts,
+          payload: {
+            text: evt.data.text,
+          },
+        });
+      } else if (evt.stream === "tool") {
+        emitA2a({
+          type: "a2a.artifact.update",
+          runId: clientRunId,
+          taskId: clientRunId,
+          contextId,
+          seq: evt.seq,
+          ts: evt.ts,
+          payload: {
+            data: (toolPayload as { data?: unknown })?.data ?? {},
+          },
+        });
+      } else if (evt.stream === "lifecycle" && lifecyclePhase) {
+        const state =
+          lifecyclePhase === "start"
+            ? "working"
+            : lifecyclePhase === "end"
+              ? "completed"
+              : lifecyclePhase === "error"
+                ? "failed"
+                : undefined;
+        if (state) {
+          emitA2a({
+            type: "a2a.task.status",
+            runId: clientRunId,
+            taskId: clientRunId,
+            contextId,
+            seq: evt.seq,
+            ts: evt.ts,
+            payload: {
+              state,
+              error: evt.data?.error,
+            },
+          });
+          if (lifecyclePhase === "end") {
+            emitA2a({
+              type: "a2a.message.final",
+              runId: clientRunId,
+              taskId: clientRunId,
+              contextId,
+              seq: evt.seq,
+              ts: evt.ts,
+              payload: {
+                text: bufferedText || undefined,
+              },
+            });
+          }
+          if (lifecyclePhase === "end" || lifecyclePhase === "error") {
+            void deliverA2aPushEnvelope({
+              contextId,
+              sessionKey,
+              hasActiveWsRecipient: hasA2aEventClients,
+              envelope: {
+                kind: "status-update",
+                idempotencyKey: `${clientRunId}:${evt.seq}:${lifecyclePhase}`,
+                runId: clientRunId,
+                taskId: clientRunId,
+                contextId,
+                status: {
+                  state: lifecyclePhase === "end" ? "completed" : "failed",
+                },
+                ts: Date.now(),
+              },
+            });
+            if (lifecyclePhase === "end" && bufferedText) {
+              void deliverA2aPushEnvelope({
+                contextId,
+                sessionKey,
+                hasActiveWsRecipient: hasA2aEventClients,
+                envelope: {
+                  kind: "message",
+                  idempotencyKey: `${clientRunId}:${evt.seq}:final`,
+                  runId: clientRunId,
+                  taskId: clientRunId,
+                  contextId,
+                  message: {
+                    type: "final",
+                    text: bufferedText,
+                  },
+                  ts: Date.now(),
+                },
+              });
+            }
+          }
+        }
+      }
+    }
 
     if (sessionKey) {
       // Send tool events to node/channel subscribers only when verbose is enabled;

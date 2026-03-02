@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadConfig } from "../config/config.js";
 import { registerAgentRunContext, resetAgentRunContextForTest } from "../infra/agent-events.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { toA2aSessionKey } from "./a2a-context.js";
 import {
   createAgentEventHandler,
   createChatRunState,
@@ -508,5 +509,35 @@ describe("agent event handler", () => {
     expect(payload.message?.content?.[0]?.text).toBe(
       "Disk usage crossed 95 percent on /data and needs cleanup now.",
     );
+  });
+
+  it("projects agent events to a2a events for a2a session keys", () => {
+    const { broadcast, handler } = createHarness({
+      resolveSessionKeyForRun: () => toA2aSessionKey("ctx-test"),
+    });
+    handler({
+      runId: "run-a2a",
+      seq: 1,
+      stream: "assistant",
+      ts: Date.now(),
+      data: { text: "hello from agent" },
+      sessionKey: toA2aSessionKey("ctx-test"),
+    });
+    handler({
+      runId: "run-a2a",
+      seq: 2,
+      stream: "lifecycle",
+      ts: Date.now(),
+      data: { phase: "end" },
+      sessionKey: toA2aSessionKey("ctx-test"),
+    });
+
+    const a2aPayloads = broadcast.mock.calls
+      .filter(([event]) => event === "a2a")
+      .map(([, payload]) => payload as { type?: string; payload?: { text?: string } });
+    expect(a2aPayloads.some((payload) => payload.type === "a2a.message.delta")).toBe(true);
+    expect(a2aPayloads.some((payload) => payload.type === "a2a.task.status")).toBe(true);
+    const final = a2aPayloads.find((payload) => payload.type === "a2a.message.final");
+    expect(final?.payload?.text).toBe("hello from agent");
   });
 });

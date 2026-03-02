@@ -552,6 +552,18 @@ const DOCKS: Record<ChatChannelId, ChannelDock> = {
         buildIMessageThreadToolContext({ context, hasRepliedRef }),
     },
   },
+  custom: {
+    id: "custom",
+    capabilities: {
+      chatTypes: ["direct"],
+      media: false,
+    },
+    outbound: DEFAULT_OUTBOUND_TEXT_CHUNK_LIMIT_4000,
+    config: {
+      formatAllowFrom: ({ allowFrom }) =>
+        allowFrom.map((entry) => String(entry).trim().toLowerCase()).filter(Boolean),
+    },
+  },
 };
 
 function buildDockFromPlugin(plugin: ChannelPlugin): ChannelDock {

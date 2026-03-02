@@ -1,5 +1,12 @@
-import { describe, expect, it } from "vitest";
-import { handleChatEvent, type ChatEventPayload, type ChatState } from "./chat.ts";
+import { describe, expect, it, vi } from "vitest";
+import {
+  handleA2aEvent,
+  handleChatEvent,
+  sendChatMessage,
+  abortChatRun,
+  type ChatEventPayload,
+  type ChatState,
+} from "./chat.ts";
 
 function createState(overrides: Partial<ChatState> = {}): ChatState {
   return {
@@ -16,9 +23,64 @@ function createState(overrides: Partial<ChatState> = {}): ChatState {
     connected: true,
     lastError: null,
     sessionKey: "main",
+    settings: { chatTransportMode: "chat" },
     ...overrides,
   };
 }
+
+describe("sendChatMessage transport mode", () => {
+  it("uses chat.send in default mode", async () => {
+    const request = vi.fn().mockResolvedValue({});
+    const state = createState({
+      client: { request } as unknown as ChatState["client"],
+      connected: true,
+    });
+    await sendChatMessage(state, "hello");
+    expect(request).toHaveBeenCalledWith(
+      "chat.send",
+      expect.objectContaining({
+        sessionKey: "main",
+        message: "hello",
+      }),
+    );
+  });
+
+  it("uses a2a.send in a2a mode", async () => {
+    const request = vi.fn().mockResolvedValue({});
+    const state = createState({
+      client: { request } as unknown as ChatState["client"],
+      connected: true,
+      settings: { chatTransportMode: "a2a" },
+    });
+    await sendChatMessage(state, "hello");
+    expect(request).toHaveBeenCalledWith(
+      "a2a.send",
+      expect.objectContaining({
+        contextId: "main",
+        kind: "message",
+      }),
+    );
+  });
+
+  it("uses a2a.cancel in a2a mode", async () => {
+    const request = vi.fn().mockResolvedValue({});
+    const state = createState({
+      client: { request } as unknown as ChatState["client"],
+      connected: true,
+      chatRunId: "run-1",
+      settings: { chatTransportMode: "a2a" },
+    });
+    await abortChatRun(state);
+    expect(request).toHaveBeenCalledWith(
+      "a2a.cancel",
+      expect.objectContaining({
+        runId: "run-1",
+        contextId: "main",
+        mode: "run",
+      }),
+    );
+  });
+});
 
 describe("handleChatEvent", () => {
   it("returns null when payload is missing", () => {
@@ -34,6 +96,21 @@ describe("handleChatEvent", () => {
       state: "final",
     };
     expect(handleChatEvent(state, payload)).toBe(null);
+  });
+
+  it("accepts chat events for encoded a2a session key mapped to active session", () => {
+    const state = createState({ sessionKey: "agent:main:main" });
+    const payload: ChatEventPayload = {
+      runId: "run-a2a-chat",
+      sessionKey: "agent:main:a2a:ctx:YWdlbnQ6bWFpbjptYWlu",
+      state: "final",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "A2A mapped response" }],
+      },
+    };
+    expect(handleChatEvent(state, payload)).toBe("final");
+    expect(state.chatMessages).toHaveLength(1);
   });
 
   it("returns null for delta from another run", () => {
@@ -255,5 +332,61 @@ describe("handleChatEvent", () => {
     expect(state.chatStream).toBe(null);
     expect(state.chatStreamStartedAt).toBe(null);
     expect(state.chatMessages).toEqual([existingMessage]);
+  });
+});
+
+describe("handleA2aEvent", () => {
+  it("streams deltas and final message", () => {
+    const state = createState({ sessionKey: "ctx-1" });
+    expect(
+      handleA2aEvent(state, {
+        type: "a2a.message.delta",
+        runId: "r1",
+        taskId: "r1",
+        contextId: "ctx-1",
+        payload: { text: "Hello " },
+      }),
+    ).toBe("delta");
+    expect(state.chatStream).toBe("Hello ");
+    expect(
+      handleA2aEvent(state, {
+        type: "a2a.message.delta",
+        runId: "r1",
+        taskId: "r1",
+        contextId: "ctx-1",
+        payload: { text: "world" },
+      }),
+    ).toBe("delta");
+    expect(state.chatStream).toBe("Hello world");
+    expect(
+      handleA2aEvent(state, {
+        type: "a2a.message.final",
+        runId: "r1",
+        taskId: "r1",
+        contextId: "ctx-1",
+        payload: { text: "Hello world" },
+      }),
+    ).toBe("final");
+    expect(state.chatMessages).toHaveLength(1);
+    expect(state.chatRunId).toBeNull();
+    expect(state.chatStream).toBeNull();
+  });
+
+  it("accepts events for active run even when contextId is mismatched", () => {
+    const state = createState({
+      sessionKey: "agent:main:main",
+      chatRunId: "r-active",
+      chatStream: "",
+    });
+    expect(
+      handleA2aEvent(state, {
+        type: "a2a.message.delta",
+        runId: "r-active",
+        taskId: "r-active",
+        contextId: "garbled-context",
+        payload: { text: "Hello" },
+      }),
+    ).toBe("delta");
+    expect(state.chatStream).toBe("Hello");
   });
 });

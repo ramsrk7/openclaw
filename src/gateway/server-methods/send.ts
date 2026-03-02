@@ -15,12 +15,14 @@ import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
 import {
   ErrorCodes,
+  type RequestFrame,
   errorShape,
   formatValidationErrors,
   validatePollParams,
   validateSendParams,
 } from "../protocol/index.js";
 import { formatForLog } from "../ws-log.js";
+import { chatHandlers } from "./chat.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 
 type InflightResult = {
@@ -180,6 +182,118 @@ export const sendHandlers: GatewayRequestHandlers = {
 
     const work = (async (): Promise<InflightResult> => {
       try {
+        const providedSessionKey =
+          typeof request.sessionKey === "string" && request.sessionKey.trim()
+            ? request.sessionKey.trim().toLowerCase()
+            : undefined;
+        const explicitAgentId =
+          typeof request.agentId === "string" && request.agentId.trim()
+            ? request.agentId.trim()
+            : undefined;
+        const sessionAgentId = providedSessionKey
+          ? resolveSessionAgentId({ sessionKey: providedSessionKey, config: cfg })
+          : undefined;
+        const defaultAgentId = resolveSessionAgentId({ config: cfg });
+        const effectiveAgentId = explicitAgentId ?? sessionAgentId ?? defaultAgentId;
+        if (outboundChannel === "custom") {
+          if (mediaUrl || (mediaUrls?.length ?? 0) > 0) {
+            const error = errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "custom channel currently supports text-only delivery.",
+            );
+            context.dedupe.set(dedupeKey, {
+              ts: Date.now(),
+              ok: false,
+              error,
+            });
+            return { ok: false, error, meta: { channel } };
+          }
+          if (!message) {
+            const error = errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "custom channel requires a text message.",
+            );
+            context.dedupe.set(dedupeKey, {
+              ts: Date.now(),
+              ok: false,
+              error,
+            });
+            return { ok: false, error, meta: { channel } };
+          }
+          const baseTarget = to.trim();
+          if (!baseTarget) {
+            const error = errorShape(
+              ErrorCodes.INVALID_REQUEST,
+              "custom channel requires `to` (session key).",
+            );
+            context.dedupe.set(dedupeKey, {
+              ts: Date.now(),
+              ok: false,
+              error,
+            });
+            return { ok: false, error, meta: { channel } };
+          }
+          const targetSessionKey = baseTarget.toLowerCase().startsWith("agent:")
+            ? baseTarget.toLowerCase()
+            : `agent:${effectiveAgentId}:${baseTarget.toLowerCase()}`;
+
+          let injectedOk = false;
+          let injectedPayload: unknown = undefined;
+          let injectedError: ReturnType<typeof errorShape> | undefined;
+          const injectReq: RequestFrame = {
+            type: "req",
+            id: idem,
+            method: "chat.inject",
+            params: {
+              sessionKey: targetSessionKey,
+              message,
+              label: "Custom",
+            },
+          };
+          await chatHandlers["chat.inject"]({
+            req: injectReq,
+            params: (injectReq.params ?? {}) as Record<string, unknown>,
+            client: null,
+            isWebchatConnect: () => true,
+            respond: (ok, payload, error) => {
+              injectedOk = ok;
+              injectedPayload = payload;
+              injectedError = error;
+            },
+            context,
+          });
+          if (!injectedOk) {
+            const error =
+              injectedError ??
+              errorShape(ErrorCodes.UNAVAILABLE, "custom delivery failed to inject message");
+            context.dedupe.set(dedupeKey, {
+              ts: Date.now(),
+              ok: false,
+              error,
+            });
+            return { ok: false, error, meta: { channel, sessionKey: targetSessionKey } };
+          }
+          const payload: Record<string, unknown> = {
+            runId: idem,
+            messageId:
+              typeof (injectedPayload as { messageId?: unknown } | undefined)?.messageId ===
+              "string"
+                ? (injectedPayload as { messageId: string }).messageId
+                : `custom-${Date.now()}`,
+            channel,
+            sessionKey: targetSessionKey,
+          };
+          context.dedupe.set(dedupeKey, {
+            ts: Date.now(),
+            ok: true,
+            payload,
+          });
+          return {
+            ok: true,
+            payload,
+            meta: { channel, sessionKey: targetSessionKey },
+          };
+        }
         const resolved = resolveOutboundTarget({
           channel: outboundChannel,
           to,
@@ -205,19 +319,6 @@ export const sendHandlers: GatewayRequestHandlers = {
         const mirrorMediaUrls = mirrorPayloads.flatMap(
           (payload) => payload.mediaUrls ?? (payload.mediaUrl ? [payload.mediaUrl] : []),
         );
-        const providedSessionKey =
-          typeof request.sessionKey === "string" && request.sessionKey.trim()
-            ? request.sessionKey.trim().toLowerCase()
-            : undefined;
-        const explicitAgentId =
-          typeof request.agentId === "string" && request.agentId.trim()
-            ? request.agentId.trim()
-            : undefined;
-        const sessionAgentId = providedSessionKey
-          ? resolveSessionAgentId({ sessionKey: providedSessionKey, config: cfg })
-          : undefined;
-        const defaultAgentId = resolveSessionAgentId({ config: cfg });
-        const effectiveAgentId = explicitAgentId ?? sessionAgentId ?? defaultAgentId;
         // If callers omit sessionKey, derive a target session key from the outbound route.
         const derivedRoute = !providedSessionKey
           ? await resolveOutboundSessionRoute({

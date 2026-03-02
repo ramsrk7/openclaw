@@ -629,6 +629,15 @@ export async function startGatewayServer(
           resolveSessionKeyForRun,
           clearAgentRunContext,
           toolEventRecipients,
+          hasA2aEventClients: () => {
+            for (const gatewayClient of clients) {
+              const mode = gatewayClient.connect.client?.mode;
+              if (mode === "webchat" || mode === "ui" || mode === "backend" || mode === "test") {
+                return true;
+              }
+            }
+            return false;
+          },
         }),
       );
 
@@ -740,6 +749,15 @@ export async function startGatewayServer(
             ? gatewayClient.connect.scopes
             : [];
           if (scopes.includes("operator.admin") || scopes.includes("operator.approvals")) {
+            return true;
+          }
+        }
+        return false;
+      },
+      hasA2aEventClients: () => {
+        for (const gatewayClient of clients) {
+          const mode = gatewayClient.connect.client?.mode;
+          if (mode === "webchat" || mode === "ui" || mode === "backend" || mode === "test") {
             return true;
           }
         }

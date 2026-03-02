@@ -1,5 +1,18 @@
 import type { Static } from "@sinclair/typebox";
 import type {
+  A2aCancelParamsSchema,
+  A2aCancelResultSchema,
+  A2aEventSchema,
+  A2aPushRegisterParamsSchema,
+  A2aPushRegisterResultSchema,
+  A2aPushUnregisterParamsSchema,
+  A2aPushUnregisterResultSchema,
+  A2aSendParamsSchema,
+  A2aSendResultSchema,
+  A2aWaitParamsSchema,
+  A2aWaitResultSchema,
+} from "./a2a.js";
+import type {
   AgentEventSchema,
   AgentIdentityParamsSchema,
   AgentIdentityResultSchema,
@@ -150,6 +163,17 @@ export type PresenceEntry = Static<typeof PresenceEntrySchema>;
 export type ErrorShape = Static<typeof ErrorShapeSchema>;
 export type StateVersion = Static<typeof StateVersionSchema>;
 export type AgentEvent = Static<typeof AgentEventSchema>;
+export type A2aEvent = Static<typeof A2aEventSchema>;
+export type A2aSendParams = Static<typeof A2aSendParamsSchema>;
+export type A2aSendResult = Static<typeof A2aSendResultSchema>;
+export type A2aWaitParams = Static<typeof A2aWaitParamsSchema>;
+export type A2aWaitResult = Static<typeof A2aWaitResultSchema>;
+export type A2aCancelParams = Static<typeof A2aCancelParamsSchema>;
+export type A2aCancelResult = Static<typeof A2aCancelResultSchema>;
+export type A2aPushRegisterParams = Static<typeof A2aPushRegisterParamsSchema>;
+export type A2aPushRegisterResult = Static<typeof A2aPushRegisterResultSchema>;
+export type A2aPushUnregisterParams = Static<typeof A2aPushUnregisterParamsSchema>;
+export type A2aPushUnregisterResult = Static<typeof A2aPushUnregisterResultSchema>;
 export type AgentIdentityParams = Static<typeof AgentIdentityParamsSchema>;
 export type AgentIdentityResult = Static<typeof AgentIdentityResultSchema>;
 export type PollParams = Static<typeof PollParamsSchema>;

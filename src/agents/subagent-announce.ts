@@ -9,6 +9,7 @@ import {
   resolveStorePath,
 } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
+import { deliverA2aPushEnvelope } from "../infra/a2a-push.js";
 import { createBoundDeliveryRouter } from "../infra/outbound/bound-delivery-router.js";
 import type { ConversationRef } from "../infra/outbound/session-binding-service.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
@@ -1341,6 +1342,25 @@ export async function runSubagentAnnounceFlow(params: {
       signal: params.signal,
     });
     didAnnounce = delivery.delivered;
+    void deliverA2aPushEnvelope({
+      sessionKey: targetRequesterSessionKey,
+      envelope: {
+        kind: "status-update",
+        idempotencyKey: `subagent:${params.childRunId}:${delivery.path}:${delivery.delivered ? "ok" : "err"}`,
+        taskId: params.childRunId,
+        runId: params.childRunId,
+        status: {
+          state: delivery.delivered ? "completed" : "failed",
+        },
+        message: completionMessage
+          ? {
+              type: "final",
+              text: completionMessage,
+            }
+          : undefined,
+        ts: Date.now(),
+      },
+    });
     if (!delivery.delivered && delivery.path === "direct" && delivery.error) {
       defaultRuntime.error?.(
         `Subagent completion direct announce failed for run ${params.childRunId}: ${delivery.error}`,

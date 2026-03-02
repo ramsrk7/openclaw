@@ -193,6 +193,21 @@ export function renderChatControls(state: AppViewState) {
       </button>
       <span class="chat-controls__separator">|</span>
       <button
+        class="btn btn--sm btn--icon ${state.settings.chatTransportMode === "a2a" ? "active" : ""}"
+        @click=${() => {
+          state.applySettings({
+            ...state.settings,
+            chatTransportMode: state.settings.chatTransportMode === "a2a" ? "chat" : "a2a",
+          });
+        }}
+        aria-pressed=${state.settings.chatTransportMode === "a2a"}
+        title=${
+          state.settings.chatTransportMode === "a2a" ? "A2A mode enabled" : "Enable A2A test mode"
+        }
+      >
+        A2A
+      </button>
+      <button
         class="btn btn--sm btn--icon ${showThinking ? "active" : ""}"
         ?disabled=${disableThinkingToggle}
         @click=${() => {

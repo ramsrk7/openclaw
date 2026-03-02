@@ -13,6 +13,7 @@ export const CHAT_CHANNEL_ORDER = [
   "slack",
   "signal",
   "imessage",
+  "custom",
 ] as const;
 
 export type ChatChannelId = (typeof CHAT_CHANNEL_ORDER)[number];
@@ -106,6 +107,16 @@ const CHAT_CHANNEL_META: Record<ChatChannelId, ChannelMeta> = {
     docsLabel: "imessage",
     blurb: "this is still a work in progress.",
     systemImage: "message.fill",
+  },
+  custom: {
+    id: "custom",
+    label: "Custom",
+    selectionLabel: "Custom (A2A WebSocket UI)",
+    detailLabel: "Custom",
+    docsPath: "/web/webchat",
+    docsLabel: "webchat",
+    blurb: "routes delivery into custom WebSocket chat sessions.",
+    systemImage: "rectangle.3.group.bubble.left",
   },
 };
 

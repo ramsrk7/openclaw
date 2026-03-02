@@ -90,6 +90,12 @@ const BASE_METHODS = [
   "agent",
   "agent.identity.get",
   "agent.wait",
+  "a2a.send",
+  "a2a.wait",
+  "a2a.cancel",
+  "a2a.push.register",
+  "a2a.push.unregister",
+  "a2a.push.test",
   "browser.request",
   // WebChat WebSocket-native chat methods
   "chat.history",
@@ -105,6 +111,7 @@ export function listGatewayMethods(): string[] {
 export const GATEWAY_EVENTS = [
   "connect.challenge",
   "agent",
+  "a2a",
   "chat",
   "presence",
   "tick",
